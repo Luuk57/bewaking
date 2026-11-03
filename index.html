@@ -123,8 +123,7 @@
 
   <div class="controls">
     <select id="cameraSelect">
-      <option value="environment">Achtercamera (Back)</option>
-      <option value="user">Voorcamera (Front)</option>
+      <option value="">Camera's laden...</option>
     </select>
     <button id="btnStart">Start Camera</button>
     <button id="btnStop" class="btn-danger" disabled>Stop</button>
@@ -147,7 +146,7 @@
   <div id="dimOverlay">Tik op het scherm om te ontgrendelen</div>
 
   <script>
-    // Jouw Google Apps Script URL
+    // Jouw Google Apps Script Web App URL
     const SCRIPT_URL = "https://script.google.com/macros/s/AKfycbymGiqPKPzHrOTfrvS5WrzkwZhAUqHVksVjQdHv4aV0qGXJq2WGS3S-PBgUOnwS2n8t/exec";
 
     const video = document.getElementById('video');
@@ -169,7 +168,42 @@
     let count = 0;
     let lastPhotoTime = 0;
 
-    // 1. Wake Lock activeren om scherm aan te houden
+    // 1. Alle beschikbare camera's ophalen en invoegen in de selectiebox
+    async function getCameras() {
+      try {
+        // Vraag toestemming om camera-labels op te halen
+        const tempStream = await navigator.mediaDevices.getUserMedia({ video: true });
+        tempStream.getTracks().forEach(track => track.stop());
+
+        const devices = await navigator.mediaDevices.enumerateDevices();
+        const videoDevices = devices.filter(device => device.kind === 'videoinput');
+
+        cameraSelect.innerHTML = '';
+
+        if (videoDevices.length === 0) {
+          cameraSelect.innerHTML = '<option value="">Geen camera gevonden</option>';
+          return;
+        }
+
+        videoDevices.forEach((device, index) => {
+          const option = document.createElement('option');
+          option.value = device.deviceId;
+          option.text = device.label || `Camera ${index + 1}`;
+          cameraSelect.appendChild(option);
+        });
+      } catch (err) {
+        console.warn("Camera's ophalen mislukt, terugvalopties laden:", err);
+        cameraSelect.innerHTML = `
+          <option value="environment">Achtercamera (Back)</option>
+          <option value="user">Voorcamera (Front)</option>
+        `;
+      }
+    }
+
+    // Direct camera's ophalen bij laden pagina
+    getCameras();
+
+    // 2. Wake Lock activeren om schermvergrendeling te voorkomen
     async function requestWakeLock() {
       try {
         if ('wakeLock' in navigator) {
@@ -187,13 +221,21 @@
       }
     }
 
-    // 2. Camera starten
+    // 3. Camera starten op basis van de gekozen ID
     btnStart.addEventListener('click', async () => {
-      const selectedCamera = cameraSelect.value;
+      const selectedDeviceId = cameraSelect.value;
+      
+      let videoConstraint = {};
+      if (selectedDeviceId === 'environment' || selectedDeviceId === 'user') {
+        videoConstraint = { facingMode: selectedDeviceId };
+      } else if (selectedDeviceId) {
+        videoConstraint = { deviceId: { exact: selectedDeviceId } };
+      } else {
+        videoConstraint = true;
+      }
+
       try {
-        stream = await navigator.mediaDevices.getUserMedia({ 
-          video: { facingMode: selectedCamera } 
-        });
+        stream = await navigator.mediaDevices.getUserMedia({ video: videoConstraint });
         video.srcObject = stream;
         btnStart.disabled = true;
         cameraSelect.disabled = true;
@@ -202,13 +244,13 @@
         statusEl.innerText = "Status: Actief - Zoeken naar beweging...";
         
         await requestWakeLock();
-        intervalId = setInterval(detectMotion, 200); // 5x per seconde
+        intervalId = setInterval(detectMotion, 200); // 5x per seconde testen
       } catch (err) {
         statusEl.innerText = "Fout bij openen camera: " + err.message;
       }
     });
 
-    // 3. Camera stoppen
+    // 4. Camera stoppen
     btnStop.addEventListener('click', () => {
       if (stream) {
         stream.getTracks().forEach(track => track.stop());
@@ -223,7 +265,7 @@
       previousFrame = null;
     });
 
-    // 4. Bewegingsdetectie via pixelverschil
+    // 5. Bewegingsdetectie via pixelverschil
     function detectMotion() {
       ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
       const currentFrame = ctx.getImageData(0, 0, canvas.width, canvas.height);
@@ -240,7 +282,7 @@
           if (rDiff + gDiff + bDiff > 90) diff++;
         }
 
-        // Minimaal 3 seconden pauze tussen foto's
+        // Minimaal 3 seconden pauze tussen 2 foto's
         const now = Date.now();
         if (diff > 4000 && (now - lastPhotoTime > 3000)) {
           lastPhotoTime = now;
@@ -250,7 +292,7 @@
       previousFrame = currentFrame;
     }
 
-    // 5. Foto maken en verzenden naar Google Drive/Sheet
+    // 6. Foto maken en uploaden naar Google Drive & Sheet
     function capturePhoto() {
       const dataUrl = canvas.toDataURL('image/jpeg');
       
@@ -264,7 +306,7 @@
       
       const fileName = `bewaking_${timestamp}.jpg`;
 
-      // Toon in lokale galerij
+      // Voeg toe aan lokale galerij
       const img = document.createElement('img');
       img.src = dataUrl;
       img.title = fileName;
@@ -274,7 +316,7 @@
 
       statusEl.innerText = "Status: Foto uploaden naar Google Drive...";
 
-      // Verzenden naar Google Apps Script
+      // Versturen naar Google Apps Script
       fetch(SCRIPT_URL, {
         method: 'POST',
         mode: 'no-cors',
@@ -292,7 +334,7 @@
       });
     }
 
-    // 6. Dim-modus
+    // 7. Scherm dimmen
     btnDim.addEventListener('click', () => { dimOverlay.style.display = 'flex'; });
     dimOverlay.addEventListener('click', () => { dimOverlay.style.display = 'none'; });
 
