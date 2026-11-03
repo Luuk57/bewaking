@@ -1,233 +1,52 @@
-<!DOCTYPE html>
-<html lang="nl">
-<head>
-  <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Bewakingscamera PWA</title>
-  <link rel="manifest" href="manifest.json">
-  <meta name="theme-color" content="#121212">
-  <style>
-    body {
-      font-family: system-ui, -apple-system, sans-serif;
-      background: #121212;
-      color: #fff;
-      margin: 0;
-      padding: 16px;
-      display: flex;
-      flex-direction: column;
-      align-items: center;
+<!-- Voeg een cameraschakelaar toe aan de controls -->
+<div class="controls">
+  <select id="cameraSelect">
+    <option value="environment">Achtercamera (Back)</option>
+    <option value="user">Voorcamera (Front)</option>
+  </select>
+  <button id="btnStart">Start Camera</button>
+  <button id="btnStop" class="btn-danger" disabled>Stop</button>
+  <button id="btnDim" class="btn-dark" disabled>Dim Scherm</button>
+</div>
+
+<script>
+  const cameraSelect = document.getElementById('cameraSelect');
+
+  btnStart.addEventListener('click', async () => {
+    const selectedCamera = cameraSelect.value;
+    try {
+      // Gebruik de gekozen camera (user of environment)
+      stream = await navigator.mediaDevices.getUserMedia({ 
+        video: { facingMode: selectedCamera } 
+      });
+      video.srcObject = stream;
+      // ... overige start logica ...
+    } catch (err) {
+      statusEl.innerText = "Fout bij openen camera: " + err.message;
     }
-    h1 { font-size: 1.4rem; margin-bottom: 12px; }
-    .controls {
-      display: flex;
-      gap: 10px;
-      margin-bottom: 16px;
-      flex-wrap: wrap;
-      justify-content: center;
-    }
-    button {
-      padding: 10px 16px;
-      border: none;
-      border-radius: 6px;
-      font-weight: bold;
-      cursor: pointer;
-      background: #007bff;
-      color: white;
-    }
-    button:disabled { background: #444; cursor: not-allowed; }
-    .btn-danger { background: #dc3545; }
-    .btn-dark { background: #333; border: 1px solid #555; }
-    .video-container {
-      position: relative;
-      width: 100%;
-      max-width: 480px;
-      background: #000;
-      border-radius: 8px;
-      overflow: hidden;
-    }
-    video { width: 100%; display: block; }
-    .status {
-      margin: 12px 0;
-      font-size: 0.9rem;
-      color: #aaa;
-      text-align: center;
-    }
-    .gallery {
-      width: 100%;
-      max-width: 480px;
-      margin-top: 20px;
-    }
-    .gallery h2 { font-size: 1.1rem; border-bottom: 1px solid #333; padding-bottom: 8px; }
-    .grid {
-      display: grid;
-      grid-template-columns: repeat(auto-fill, minmax(100px, 1fr));
-      gap: 8px;
-    }
-    .grid img {
-      width: 100%;
-      height: 75px;
-      object-fit: cover;
-      border-radius: 4px;
-      border: 1px solid #444;
-    }
-    /* Dim-scherm overlay om inbranden/batterij te besparen */
-    #dimOverlay {
-      display: none;
-      position: fixed;
-      top: 0; left: 0; width: 100vw; height: 100vh;
-      background: rgba(0, 0, 0, 0.95);
-      z-index: 9999;
-      justify-content: center;
-      align-items: center;
-      color: #444;
-      font-size: 1rem;
-    }
-  </style>
-</head>
-<body>
+  });
 
-  <h1>Bewakingscamera PWA</h1>
+  // Foto maken met datum/tijd als bestandsnaam
+  function capturePhoto() {
+    const dataUrl = canvas.toDataURL('image/jpeg');
+    
+    // Genereer datum/tijd stempel (bijv: 2026-11-03_15-43-00)
+    const now = new Date();
+    const timestamp = now.getFullYear() + "-" +
+      String(now.getMonth() + 1).padStart(2, '0') + "-" +
+      String(now.getDate()).padStart(2, '0') + "_" +
+      String(now.getHours()).padStart(2, '0') + "-" +
+      String(now.getMinutes()).padStart(2, '0') + "-" +
+      String(now.getSeconds()).padStart(2, '0');
+    
+    const fileName = `bewaking_${timestamp}.jpg`;
 
-  <div class="controls">
-    <button id="btnStart">Start Camera</button>
-    <button id="btnStop" class="btn-danger" disabled>Stop</button>
-    <button id="btnDim" class="btn-dark" disabled>Dim Scherm</button>
-  </div>
+    // Toon in de galerij
+    const img = document.createElement('img');
+    img.src = dataUrl;
+    img.title = fileName;
+    grid.prepend(img);
 
-  <div class="video-container">
-    <video id="video" autoplay playsinline muted></video>
-  </div>
-
-  <div id="status" class="status">Status: Gestopt</div>
-
-  <canvas id="canvas" width="320" height="240" style="display:none;"></canvas>
-
-  <div class="gallery">
-    <h2>Gemaakte Foto's (<span id="photoCount">0</span>)</h2>
-    <div id="grid" class="grid"></div>
-  </div>
-
-  <div id="dimOverlay">Tik op het scherm om te ontgrendelen</div>
-
-  <script>
-    const video = document.getElementById('video');
-    const canvas = document.getElementById('canvas');
-    const ctx = canvas.getContext('2d');
-    const btnStart = document.getElementById('btnStart');
-    const btnStop = document.getElementById('btnStop');
-    const btnDim = document.getElementById('btnDim');
-    const statusEl = document.getElementById('status');
-    const grid = document.getElementById('grid');
-    const photoCount = document.getElementById('photoCount');
-    const dimOverlay = document.getElementById('dimOverlay');
-
-    let stream = null;
-    let intervalId = null;
-    let previousFrame = null;
-    let wakeLock = null;
-    let count = 0;
-    let lastPhotoTime = 0;
-
-    // 1. Wake Lock activeren om te voorkomen dat het scherm uitgaat
-    async function requestWakeLock() {
-      try {
-        if ('wakeLock' in navigator) {
-          wakeLock = await navigator.wakeLock.request('screen');
-          console.log("Wake Lock actief");
-        }
-      } catch (err) {
-        console.warn("Wake Lock mislukt:", err);
-      }
-    }
-
-    function releaseWakeLock() {
-      if (wakeLock) {
-        wakeLock.release();
-        wakeLock = null;
-      }
-    }
-
-    // 2. Camera starten
-    btnStart.addEventListener('click', async () => {
-      try {
-        stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: 'environment' } });
-        video.srcObject = stream;
-        btnStart.disabled = true;
-        btnStop.disabled = false;
-        btnDim.disabled = false;
-        statusEl.innerText = "Status: Actief - Zoeken naar beweging...";
-        
-        await requestWakeLock();
-        intervalId = setInterval(detectMotion, 200); // 5x per seconde testen
-      } catch (err) {
-        statusEl.innerText = "Fout bij openen camera: " + err.message;
-      }
-    });
-
-    // 3. Camera stoppen
-    btnStop.addEventListener('click', () => {
-      if (stream) {
-        stream.getTracks().forEach(track => track.stop());
-      }
-      clearInterval(intervalId);
-      releaseWakeLock();
-      btnStart.disabled = false;
-      btnStop.disabled = true;
-      btnDim.disabled = true;
-      statusEl.innerText = "Status: Gestopt";
-      previousFrame = null;
-    });
-
-    // 4. Bewegingsdetectie via pixelvergelijking
-    function detectMotion() {
-      ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
-      const currentFrame = ctx.getImageData(0, 0, canvas.width, canvas.height);
-
-      if (previousFrame) {
-        let diff = 0;
-        const data1 = currentFrame.data;
-        const data2 = previousFrame.data;
-
-        for (let i = 0; i < data1.length; i += 4) {
-          const rDiff = Math.abs(data1[i] - data2[i]);
-          const gDiff = Math.abs(data1[i+1] - data2[i+1]);
-          const bDiff = Math.abs(data1[i+2] - data2[i+2]);
-          if (rDiff + gDiff + bDiff > 90) diff++;
-        }
-
-        // Cooldown van 3 seconden tussen foto's
-        const now = Date.now();
-        if (diff > 4000 && (now - lastPhotoTime > 3000)) {
-          lastPhotoTime = now;
-          capturePhoto();
-        }
-      }
-      previousFrame = currentFrame;
-    }
-
-    // 5. Foto opslaan en tonen in galerij
-    function capturePhoto() {
-      const dataUrl = canvas.toDataURL('image/jpeg');
-      const img = document.createElement('img');
-      img.src = dataUrl;
-      grid.prepend(img);
-      count++;
-      photoCount.innerText = count;
-      statusEl.innerText = "Status: Beweging gedetecteerd! Foto gemaakt om " + new Date().toLocaleTimeString();
-    }
-
-    // 6. Dim-modus voor batterijbesparing
-    btnDim.addEventListener('click', () => {
-      dimOverlay.style.display = 'flex';
-    });
-    dimOverlay.addEventListener('click', () => {
-      dimOverlay.style.display = 'none';
-    });
-
-    // Service Worker registreren voor PWA
-    if ('serviceWorker' in navigator) {
-      navigator.serviceWorker.register('sw.js');
-    }
-  </script>
-</body>
-</html>
+    // Hier kun je de Google Drive Upload functie aanroepen met dataUrl en fileName
+  }
+</script>
